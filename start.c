@@ -47,22 +47,24 @@ int main(int argc, char *argv[])
 {	
 	int nproc, proc_id, proc_i, proc_j, conf; 
 	int dims[2], memsize[3];
-	double L, h; 
-	int nx,ny,nz;
+	double L, h, tau, diffx, diffy, diffz, E1, E2x, E2y, E2z; 
+	int M, Mr, R;
 	int lnx, lny, lnz;
 	int istart[3], isize[3], iend[3];
 	int fstart[3], fsize[3], fend[3];
-	double *spread_rect, *local_rect;	
-	int Msp = 3; 
+	double *spread_rect, *local_rect;
+	double *E2xl, *E2yl, *E2zl;	
+	int Msp = 2; 
 	int mx, my, mz, lmx, lmy, lmz, smx, smy, smz;
 	int NORTH, NE, EAST, SE, SOUTH, SW, WEST, NW, P1, P2;
-	int i,j,k;
+	int i,j,k,s, l1, l2, l3;
  	double *N_Recv, *NE_Recv, *E_Recv, *SE_Recv, *S_Recv, *SW_Recv, *W_Recv, *NW_Recv;
 	double *N_Send, *NE_Send, *E_Send, *SE_Send, *S_Send, *SW_Send, *W_Send, *NW_Send;	
 	int dimSbuffer[3], dimRbuffer[3], dimSpreadRect[3];
 	int idx[3]; 
 	L = 2.0 * M_PI;
-
+	double *xj, *yj, *zj;
+	int n_src, N_src;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
@@ -72,6 +74,17 @@ int main(int argc, char *argv[])
 	// 2x2 processor for now
 	dims[0]=3; dims[1]=4;
 	P1 = dims[0]; P2 = dims[1];	
+
+	// number of sources in each processor
+	n_src = 1;
+
+	// number of sources in total
+	N_src = n_src * P1 * P2;
+
+
+	xj = (double *) malloc( sizeof(double) * n_src );
+	yj = (double *) malloc( sizeof(double) * n_src );
+	zj = (double *) malloc( sizeof(double) * n_src );
 
 	// set 8 neighbours
 	k = proc_id / P1;
@@ -86,19 +99,33 @@ int main(int argc, char *argv[])
 	NW	  = mod(k+1,P2)*P1 + mod(j-1,P1);
 
 	// assume for now 
-	nx = ny = nz = 12;
+	M   = 12; 
+	R   = 2;
+	Mr  = R*M; 
+	tau = (1.*Msp) / (M*M); 
 
-	h = L / nx;
+	h = L / M;
 	
+	E2xl = (double *) malloc( sizeof(double) * 2*Msp );
+	E2yl = (double *) malloc( sizeof(double) * 2*Msp );
+	E2zl = (double *) malloc( sizeof(double) * 2*Msp );
+
 	// initialize P3DFFT
-	Cp3dfft_setup(dims,nx,ny,nz,MPI_Comm_c2f(MPI_COMM_WORLD), nx,ny,nz, 0, memsize);
+	Cp3dfft_setup(dims,M,M,M,MPI_Comm_c2f(MPI_COMM_WORLD), M,M,M, 0, memsize);
 	
 	conf = 1;
 	Cp3dfft_get_dims(istart, iend, isize, conf);
 
+	// dimension of local rectangle
 	lnx = isize[0];
 	lny = isize[1];
 	lnz = isize[2];
+	
+	// one source for now
+	xj[0]= (istart[0]+iend[0]*)h/2; 
+	yj[0]= (istart[1]+iend[1])*h/2; 
+	xj[0]= (istart[2]+iend[2])*h/2;
+	
 
 	// rectangle for spreading, dimension: nx x (ny_local + 2Msp) x (nz_local+2Msp)
 	spread_rect = (double *) malloc( sizeof(double) * lnx*(lny+2*Msp)*(lnz+2*Msp) );
@@ -135,25 +162,47 @@ int main(int argc, char *argv[])
 	printf("istart[0] = %d, istart[1] = %d, istart[2] = %d\n", istart[0],istart[1], istart[2]);
 	printf("iend[0] = %d, iend[1] = %d, iend[2] = %d\n", iend[0],iend[1], iend[2]);
 	printf("isize[0] = %d, isize[1] = %d, isize[2] = %d\n", isize[0],isize[1], isize[2]);
-*/	
-	// generate a source at the center of each processor 
-	double xj[3];
-	xj[0]= (istart[0]); 
-	xj[1]= (istart[1]+iend[1])*h/2; 
-	xj[2]= (istart[2]+iend[2])*h/2;
-	
-	mx = (int) (xj[0]/h); 
-	my = (int) (xj[1]/h);
-	mz = (int) (xj[2]/h);
+*/
 
+	// for each source
+	double mxh  = mx*h;
+	double myh  = my*h;
+	double mzh  = mz*h;
+	double piMtau = M_PI / (Mr * tau);
+	for(s=0; s < n_src ; ++s){
+		
+		// find the closest grid point (in the whole domain)
+		mx = (int) ( xj[s]/h );
+		my = (int) ( yj[s]/h );
+		mz = (int) ( zj[s]/h );
+		
+		// closest grid point (in spreading rect with halo cells )
+		smx= mx - (istart[0]-1);
+		smy= my - (istart[1]-1) + Msp;
+		smz= mz - (istart[2]-1) + Msp;
+
+		diffx = xj[s] - mxh;
+		diffy = yj[s] - myh;
+		diffz = zj[s] - mzh;
+		E1 = exp( -(diffx*diffx+diffy*diffy+diffz*diffz)/(4*tau) );
+
+		E2x = exp( piMtau * diffx  );
+		E2y = exp( piMtau * diffy  );
+		E2z = exp( piMtau * diffz  );
+
+		for (l1 = -Msp+1; l1<=Msp; ++l1 ){
+			//////////
+		}
+
+
+	}
+
+/* debug message 
 if (proc_id == 11){	
 	printf("center: %d %d %d \n", mx, my, mz);
 }
+*/
 	// mx,my,mz in the spread_rect
-	smx= mx - (istart[0]-1);
-	smy= my - (istart[1]-1) + Msp;
-	smz= mz - (istart[2]-1) + Msp;
-
 //	printf("lnx = %d, lny = %d, lnz = %d \n", lnx, lny, lnz);
 //	printf("smx = %d, smy = %d, smz = %d \n", smx, smy, smz);
 
