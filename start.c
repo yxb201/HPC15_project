@@ -49,12 +49,12 @@ int main(int argc, char *argv[])
 	int dims[2], memsize[3];
 	double L, h, tau, diffx, diffy, diffz, E1, E2x, E2y, E2z; 
 	int M, Mr, R;
-	int lnx, lny, lnz;
+	int lnx, lny, lnz, lkx, lky, lkz;
 	int istart[3], isize[3], iend[3];
 	int fstart[3], fsize[3], fend[3];
-	double *spread_rect, *local_rect;
+	double *spread_rect, *local_rect, *output_rect;
 	double *E2xl, *E2yl, *E2zl;	
-	int Msp = 2; 
+	int Msp; 
 	int mx, my, mz, lmx, lmy, lmz, smx, smy, smz;
 	int NORTH, NE, EAST, SE, SOUTH, SW, WEST, NW, P1, P2;
 	int i,j,k,s, l1, l2, l3;
@@ -65,6 +65,9 @@ int main(int argc, char *argv[])
 	L = 2.0 * M_PI;
 	double *xj, *yj, *zj;
 	int n_src, N_src;
+	unsigned char op_f[3]="fft";
+
+	double V0,V1,V2,V3; 
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
@@ -72,11 +75,11 @@ int main(int argc, char *argv[])
 	MPI_Status status;
 
 	// 2x2 processor for now
-	dims[0]=3; dims[1]=4;
+	dims[0]=2; dims[1]=2;
 	P1 = dims[0]; P2 = dims[1];	
 
 	// number of sources in each processor
-	n_src = 1;
+	n_src = 8*8*16;
 
 	// number of sources in total
 	N_src = n_src * P1 * P2;
@@ -96,44 +99,110 @@ int main(int argc, char *argv[])
 	SOUTH = mod(k-1,P2)*P1 + mod(j  ,P1);
 	SW    = mod(k-1,P2)*P1 + mod(j-1,P1);
 	WEST  = mod(k  ,P2)*P1 + mod(j-1,P1);
-	NW	  = mod(k+1,P2)*P1 + mod(j-1,P1);
+	NW    = mod(k+1,P2)*P1 + mod(j-1,P1);
 
 	// assume for now 
-	M   = 12; 
+	Mr  = 32; 
+	Msp = 12;
 	R   = 2;
-	Mr  = R*M; 
+	M  = Mr/R; 
 	tau = (1.*Msp) / (M*M); 
 
-	h = L / M;
+	h = L / Mr;
+
+	// precompute E3 and E4
+	double *E3, *E4; 
+	E3 = (double *) malloc( sizeof(double)* (Msp+1) );
+	E4 = (double *) malloc( sizeof(double)* (M/2+1) );
+	for (i=0; i<=Msp ; ++i){
+		E3[i]=exp(-(M_PI*i/Mr)*(M_PI*i/Mr)/tau);
+	}
 	
+	for (i=0; i<=M/2 ; ++i){
+		E4[i] = exp(tau*i*i);
+	}
+/*
+if (proc_id == 0){
+
+//	printf("%f\n", E3[0]);
+
+	printf("E3: ");
+	for (i=0; i<=Msp ; ++i){
+		printf("%f ",E3[i]);
+	}
+	printf("\n");
+
+	printf("E4: ");
+	for (i=0; i<=M/2 ; ++i){
+		printf("%f ",E4[i]);
+	}
+	printf("\n");
+
+}
+*/
 	E2xl = (double *) malloc( sizeof(double) * 2*Msp );
 	E2yl = (double *) malloc( sizeof(double) * 2*Msp );
 	E2zl = (double *) malloc( sizeof(double) * 2*Msp );
 
 	// initialize P3DFFT
-	Cp3dfft_setup(dims,M,M,M,MPI_Comm_c2f(MPI_COMM_WORLD), M,M,M, 0, memsize);
+	Cp3dfft_setup(dims,Mr,Mr,Mr,MPI_Comm_c2f(MPI_COMM_WORLD), Mr,Mr,Mr, 0, memsize);
 	
+	// set input dimensions	
 	conf = 1;
 	Cp3dfft_get_dims(istart, iend, isize, conf);
 
+	
+	// set output dimensions
+	conf = 2;
+	Cp3dfft_get_dims(fstart, fend, fsize, conf);
+/*
+if (proc_id == 0){
+	
+
+	printf("istart: %d %d %d \n", istart[0], istart[1], istart[2]);
+	printf("iend: %d %d %d \n", iend[0], iend[1], iend[2]);
+	printf("isize: %d %d %d \n", isize[0], isize[1], isize[2]);
+
+	printf("\n");
+
+	printf("fstart: %d %d %d \n", fstart[0], fstart[1], fstart[2]);
+	printf("fend: %d %d %d \n", fend[0], fend[1], fend[2]);
+	printf("fsize: %d %d %d \n", fsize[0], fsize[1], fsize[2]);
+
+}
+*/	
 	// dimension of local rectangle
 	lnx = isize[0];
 	lny = isize[1];
 	lnz = isize[2];
+
+	lkx = fsize[0];
+	lky = fsize[1];
+	lkz = fsize[2];
 	
 	// one source for now
-	xj[0]= (istart[0]+iend[0]*)h/2; 
+	xj[0]= (istart[0]+iend[0])*h/2; 
 	yj[0]= (istart[1]+iend[1])*h/2; 
-	xj[0]= (istart[2]+iend[2])*h/2;
-	
+	zj[0]= (istart[2]+iend[2])*h/2;
+
+/*	
+if (proc_id == 0){
+	printf("%f, %f, %f\n",xj[0], yj[0], zj[0]);
+}
+*/
 
 	// rectangle for spreading, dimension: nx x (ny_local + 2Msp) x (nz_local+2Msp)
 	spread_rect = (double *) malloc( sizeof(double) * lnx*(lny+2*Msp)*(lnz+2*Msp) );
 	for (i=0; i<lnx*(lny+2*Msp)*(lnz+2*Msp); ++i) spread_rect[i] = 0.;
 
+	dimSpreadRect[0]=lnx; dimSpreadRect[1]=lny+2*Msp; dimSpreadRect[2] = lnz+2*Msp;
+
 	// rectangle for local data, dimension: nx x ny_local x nz_local
 	local_rect  = (double *) malloc( sizeof(double) * lnx*lny*lnz );	
 	for (i=0; i<lnx*lny*lnz; ++i) local_rect[i] = 0.;
+
+	// set dimension of output data
+	output_rect = (double *) malloc( sizeof(double) * fsize[0]*fsize[1]*fsize[2]*2 );
 
 
 	// allocate buffer size
@@ -164,10 +233,24 @@ int main(int argc, char *argv[])
 	printf("isize[0] = %d, isize[1] = %d, isize[2] = %d\n", isize[0],isize[1], isize[2]);
 */
 
+	// generate sources
+	for (k=0; k<8; k++){
+		for(j=0; j<8; j++){
+			for (i=0; i<16; i++){
+				xj[l(i,j,k,16,8)] = i*(2*M_PI/16);
+				yj[l(i,j,k,16,8)] = (j+istart[1]-1)*(2*M_PI/16);
+				zj[l(i,j,k,16,8)] = (k+istart[2]-1)*(2*M_PI/16);	
+			}			
+		}
+	}
+
+
+
+	// need to print sources to check
+
+
 	// for each source
-	double mxh  = mx*h;
-	double myh  = my*h;
-	double mzh  = mz*h;
+	double mxh, myh, mzh;
 	double piMtau = M_PI / (Mr * tau);
 	for(s=0; s < n_src ; ++s){
 		
@@ -175,49 +258,99 @@ int main(int argc, char *argv[])
 		mx = (int) ( xj[s]/h );
 		my = (int) ( yj[s]/h );
 		mz = (int) ( zj[s]/h );
+/*		
+if (proc_id == 0){
+		printf("center: %d %d %d \n", mx, my, mz);
+}*/
+
+		mxh = mx*h; myh = my*h; mzh = mz*h;
+
+
+/*
+if (proc_id == 0){
+		printf("center: %.16f %.16f %.16f \n", mxh, myh, mzh);
+}
 		
 		// closest grid point (in spreading rect with halo cells )
 		smx= mx - (istart[0]-1);
 		smy= my - (istart[1]-1) + Msp;
 		smz= mz - (istart[2]-1) + Msp;
-
+		
 		diffx = xj[s] - mxh;
 		diffy = yj[s] - myh;
 		diffz = zj[s] - mzh;
 		E1 = exp( -(diffx*diffx+diffy*diffy+diffz*diffz)/(4*tau) );
 
+if (proc_id == 0){
+		printf("E1 = %.16f \n ", E1);
+}
+
 		E2x = exp( piMtau * diffx  );
 		E2y = exp( piMtau * diffy  );
 		E2z = exp( piMtau * diffz  );
 
-		for (l1 = -Msp+1; l1<=Msp; ++l1 ){
-			//////////
+
+if (proc_id == 0){
+		printf("E2x = %.16f, E2y = %.16f, E2z = %.16f \n", E2x, E2y, E2z);
+}
+
+
+
+		E2xl[Msp-1]=1.; E2yl[Msp-1]=1.; E2zl[Msp-1]=1.;
+		for (l1 = 1; l1<=Msp; ++l1 ){
+			E2xl[l1+(Msp-1)] = E2xl[(l1-1)+(Msp-1)] * E2x;
+			E2yl[l1+(Msp-1)] = E2yl[(l1-1)+(Msp-1)] * E2y; 
+ 			E2zl[l1+(Msp-1)] = E2zl[(l1-1)+(Msp-1)] * E2z; 
 		}
 
+		for (l1 = -1; l1>=-Msp+1; --l1){
+			E2xl[l1+(Msp-1)] = E2xl[(l1+1)+(Msp-1)] / E2x; 
+			E2yl[l1+(Msp-1)] = E2yl[(l1+1)+(Msp-1)] / E2y; 
+			E2zl[l1+(Msp-1)] = E2zl[(l1+1)+(Msp-1)] / E2z; 
+		
+		}
 
-	}
+if (proc_id == 0){
+		printf("E2xl: ");
+		for (l1 = 0; l1 < 2*Msp; ++l1){
+			printf("%.16f ", E2xl[l1]);
+		}
+		printf("\n");
 
-/* debug message 
-if (proc_id == 11){	
-	printf("center: %d %d %d \n", mx, my, mz);
+
+		printf("E2yl: ");
+		for (l1 = 0; l1 < 2*Msp; ++l1){
+			printf("%.16f ", E2yl[l1]);
+		}
+		printf("\n");
+
+
+		printf("E2zl: ");
+		for (l1 = 0; l1 < 2*Msp; ++l1){
+			printf("%.16f ", E2zl[l1]);
+		}
+		printf("\n");
 }
 */
-	// mx,my,mz in the spread_rect
-//	printf("lnx = %d, lny = %d, lnz = %d \n", lnx, lny, lnz);
-//	printf("smx = %d, smy = %d, smz = %d \n", smx, smy, smz);
 
-	dimSpreadRect[0]=lnx; dimSpreadRect[1]=lny+2*Msp; dimSpreadRect[2] = lnz+2*Msp;
+		// build the spreading rectangle
+		V0 = 1. * E1;
+		for (k=-Msp+1; k<=Msp; ++k){
 
-	// build the spreading rectangle
-	for (k=-Msp+1; k<=Msp; ++k){
-		for (j=-Msp+1; j<=Msp; ++j){
-			for (i=-Msp+1; i<=Msp; ++i){ 
-				spread_rect[l(mod(i+smx,nx),j+smy,k+smz,lnx,lny+2*Msp)] += 1.;
+			V1 = V0 * E2zl[k+(Msp-1)] * E3[abs(k)];
+			for (j=-Msp+1; j<=Msp; ++j){
+				
+				V2 = V1 * E2yl[j+(Msp-1)] * E3[abs(j)];
+				for (i=-Msp+1; i<=Msp; ++i){ 
+					
+					V3 = V2 * E2xl[i+(Msp-1)] * E3[abs(i)];
+					spread_rect[l(mod(i+smx,Mr),j+smy,k+smz,lnx,lny+2*Msp)] += V3;
+				}
 			}
 		}
-	}
 
-//}
+
+	}// end of looping sources 
 
 
 	// copy spreading rectangle to local rectangle
@@ -348,50 +481,60 @@ if (proc_id == 11){
 	idx[0]=0; idx[1]=lny-Msp; idx[2]=lnz-Msp;
 	getRbuffer( NE_Recv, local_rect, idx, dimRbuffer, isize );
 
+/*
+if (proc_id == 0){ 
 
-
-if (proc_id == 2){ 
-
-	for(k=0; k<lnz; ++k){
-		for(j=0; j<lny; ++j){
+	for(k=0; k<lnz+2*Msp; ++k){
+		for(j=0; j<lny+2*Msp; ++j){
 			for(i=0; i<lnx; ++i){
-				printf("%1.1f ", local_rect[l(i,j,k,lnx,lny)]);
+				printf("%1.12f ", spread_rect[l(i,j,k,lnx,lny+2*Msp)]);
 			}
 			printf("\n");
 		}
 		printf("\n\n");
 	}
 
-}
-/*
-if (proc_id == 5){
+
+
+	for(k=0; k<lnz; ++k){
+		for(j=0; j<lny; ++j){
+			for(i=0; i<lnx; ++i){
+				printf("%1.12f ", local_rect[l(i,j,k,lnx,lny)]);
+			}
+			printf("\n");
+		}
+		printf("\n\n");
+	}
+
+}*/
+
+	// step 2: take FFT on local_rect
+	MPI_Barrier(MPI_COMM_WORLD);
+	Cp3dfft_ftran_r2c(local_rect, output_rect, op_f);
+
+if (proc_id == 1){
 	
-	printf("NW=%d\n",NW);
-	MPI_Recv(NW_Recv, lnx*Msp*Msp, MPI_DOUBLE, NW, 99, MPI_COMM_WORLD, &status);
-	
-
-	idx[0] = 0; idx[1]=0; idx[2]=isize[2]-Msp;
-	dimRbuffer[0]=lnx; dimRbuffer[1]=Msp; dimRbuffer[2]=Msp;
-	copyRbuffer(NW_Recv, local_rect, idx, dimRbuffer, isize );
-
-	for(k=0; k<isize[2];++k){
-	for(j=0; j<isize[1];++j){
-	for(i=0; i<isize[0];++i){
-		printf("%1.1f ", local_rect[l(i,j,k,isize[0],isize[1])]);	
+	for(k = 0; k<lkz; ++k){
+		for(j=0; j<lky; ++j){
+			for(i=0; i<2*lkx; ++i){
+				printf("%1.12f ", output_rect[l(i,j,k,lkx*2,lky)]);
+			}
+			printf("\n");
+		}
+		printf("\n \n");
 	}
-	printf("\n");
-	}
-	printf("\n\n");
-	}
-	printf("received\n");
 
 }
-*/
+	// step 3: Deconvolution
 
 	Cp3dfft_clean();
 	
+	free(xj); free(yj); free(zj);
+	free(E2xl); free(E2yl); free(E2zl);
+	free(E3); free(E4);	
 	free(spread_rect);
 	free(local_rect);
+	free(output_rect);
 	free(N_Recv); free(N_Send); free(S_Recv); free(S_Send); free(W_Recv); free(W_Send);  free(E_Recv); free(E_Send); 
 	free(NW_Recv); free(NW_Send); free(SE_Recv); free(SE_Send); free(SW_Recv); free(SW_Send);  free(NE_Recv); free(NE_Send); 
 
