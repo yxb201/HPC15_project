@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
 	P1 = dims[0]; P2 = dims[1];	
 
 	// number of sources in each processor
-	n_src = 8*8*16;
+	n_src = 16*8*8;
 
 	// number of sources in total
 	N_src = n_src * P1 * P2;
@@ -232,32 +232,57 @@ if (proc_id == 0){
 	printf("iend[0] = %d, iend[1] = %d, iend[2] = %d\n", iend[0],iend[1], iend[2]);
 	printf("isize[0] = %d, isize[1] = %d, isize[2] = %d\n", isize[0],isize[1], isize[2]);
 */
-
+printf(" %d %d \n ", istart[1]-1, istart[2]-1);
 	// generate sources
 	for (k=0; k<8; k++){
 		for(j=0; j<8; j++){
 			for (i=0; i<16; i++){
 				xj[l(i,j,k,16,8)] = i*(2*M_PI/16);
-				yj[l(i,j,k,16,8)] = (j+istart[1]-1)*(2*M_PI/16);
-				zj[l(i,j,k,16,8)] = (k+istart[2]-1)*(2*M_PI/16);	
+				yj[l(i,j,k,16,8)] = (j+(istart[1]-1)/R)*(2*M_PI/16);
+				zj[l(i,j,k,16,8)] = (k+(istart[2]-1)/R)*(2*M_PI/16);	
 			}			
 		}
 	}
 
-
-
+/*
 	// need to print sources to check
+	FILE *fd = NULL;
+	char filename[256];
+	snprintf(filename, 256, "output%02d.txt", proc_id);
+	fd = fopen(filename, "w+");
+	if (NULL == fd){
+		printf("Error opening file \n");
+		return 1;
+	}
+
+	for (i = 0; i < n_src; ++i){
+		fprintf(fd, "%1.12f %1.12f %1.12f \n", xj[i], yj[i], zj[i]);
+	}
+
+	fclose(fd);
+*/
+
 
 
 	// for each source
 	double mxh, myh, mzh;
 	double piMtau = M_PI / (Mr * tau);
 	for(s=0; s < n_src ; ++s){
-		
+/*		
 		// find the closest grid point (in the whole domain)
 		mx = (int) ( xj[s]/h );
 		my = (int) ( yj[s]/h );
 		mz = (int) ( zj[s]/h );
+	
+*/
+		mx = round( xj[s]/h );
+		my = round( yj[s]/h );
+		mz = round( zj[s]/h );
+
+
+		
+
+
 /*		
 if (proc_id == 0){
 		printf("center: %d %d %d \n", mx, my, mz);
@@ -265,11 +290,11 @@ if (proc_id == 0){
 
 		mxh = mx*h; myh = my*h; mzh = mz*h;
 
-
 /*
 if (proc_id == 0){
 		printf("center: %.16f %.16f %.16f \n", mxh, myh, mzh);
 }
+*/
 		
 		// closest grid point (in spreading rect with halo cells )
 		smx= mx - (istart[0]-1);
@@ -280,20 +305,20 @@ if (proc_id == 0){
 		diffy = yj[s] - myh;
 		diffz = zj[s] - mzh;
 		E1 = exp( -(diffx*diffx+diffy*diffy+diffz*diffz)/(4*tau) );
-
+/*
 if (proc_id == 0){
 		printf("E1 = %.16f \n ", E1);
 }
-
+*/
 		E2x = exp( piMtau * diffx  );
 		E2y = exp( piMtau * diffy  );
 		E2z = exp( piMtau * diffz  );
 
-
+/*
 if (proc_id == 0){
 		printf("E2x = %.16f, E2y = %.16f, E2z = %.16f \n", E2x, E2y, E2z);
 }
-
+*/
 
 
 		E2xl[Msp-1]=1.; E2yl[Msp-1]=1.; E2zl[Msp-1]=1.;
@@ -310,6 +335,7 @@ if (proc_id == 0){
 		
 		}
 
+/*
 if (proc_id == 0){
 		printf("E2xl: ");
 		for (l1 = 0; l1 < 2*Msp; ++l1){
@@ -342,14 +368,14 @@ if (proc_id == 0){
 				
 				V2 = V1 * E2yl[j+(Msp-1)] * E3[abs(j)];
 				for (i=-Msp+1; i<=Msp; ++i){ 
-					
+									
 					V3 = V2 * E2xl[i+(Msp-1)] * E3[abs(i)];
 					spread_rect[l(mod(i+smx,Mr),j+smy,k+smz,lnx,lny+2*Msp)] += V3;
 				}
 			}
 		}
 
-
+	
 	}// end of looping sources 
 
 
@@ -422,16 +448,24 @@ if (proc_id == 0){
 	}
 */
 
+//printf("here %d \n", proc_id );
 
+/*
+if (proc_id == 3)
+	printf("%d %d %d %d %d %d %d %d \n", NORTH, NE, EAST, SE, SOUTH , SW ,WEST, NW);
+*/
+	
+	MPI_Request request;
+	
 	// MPI send to neighbours
-	MPI_Send( N_Send, lnx*lny*Msp, MPI_DOUBLE, NORTH, 1, MPI_COMM_WORLD);
-	MPI_Send( S_Send, lnx*lny*Msp, MPI_DOUBLE, SOUTH, 2, MPI_COMM_WORLD);
-	MPI_Send( W_Send, lnx*Msp*lnz, MPI_DOUBLE,  WEST, 3, MPI_COMM_WORLD);
-	MPI_Send( E_Send, lnx*Msp*lnz, MPI_DOUBLE,  EAST, 4, MPI_COMM_WORLD);
-	MPI_Send(NE_Send, lnx*Msp*Msp, MPI_DOUBLE,    NE, 5, MPI_COMM_WORLD);
-	MPI_Send(SE_Send, lnx*Msp*Msp, MPI_DOUBLE,    SE, 6, MPI_COMM_WORLD);
-	MPI_Send(SW_Send, lnx*Msp*Msp, MPI_DOUBLE,    SW, 7, MPI_COMM_WORLD);
-	MPI_Send(NW_Send, lnx*Msp*Msp, MPI_DOUBLE,    NW, 8, MPI_COMM_WORLD);
+	MPI_Isend( N_Send, lnx*lny*Msp, MPI_DOUBLE, NORTH, 1, MPI_COMM_WORLD, &request);
+	MPI_Isend( S_Send, lnx*lny*Msp, MPI_DOUBLE, SOUTH, 2, MPI_COMM_WORLD, &request);
+	MPI_Isend( W_Send, lnx*Msp*lnz, MPI_DOUBLE,  WEST, 3, MPI_COMM_WORLD, &request);
+	MPI_Isend( E_Send, lnx*Msp*lnz, MPI_DOUBLE,  EAST, 4, MPI_COMM_WORLD, &request);
+	MPI_Isend(NE_Send, lnx*Msp*Msp, MPI_DOUBLE,    NE, 5, MPI_COMM_WORLD, &request);
+	MPI_Isend(SE_Send, lnx*Msp*Msp, MPI_DOUBLE,    SE, 6, MPI_COMM_WORLD, &request);
+	MPI_Isend(SW_Send, lnx*Msp*Msp, MPI_DOUBLE,    SW, 7, MPI_COMM_WORLD, &request);
+	MPI_Isend(NW_Send, lnx*Msp*Msp, MPI_DOUBLE,    NW, 8, MPI_COMM_WORLD, &request);
 
 
 	// MPI receive from neighbours
@@ -481,7 +515,9 @@ if (proc_id == 0){
 	idx[0]=0; idx[1]=lny-Msp; idx[2]=lnz-Msp;
 	getRbuffer( NE_Recv, local_rect, idx, dimRbuffer, isize );
 
+
 /*
+
 if (proc_id == 0){ 
 
 	for(k=0; k<lnz+2*Msp; ++k){
@@ -506,12 +542,25 @@ if (proc_id == 0){
 		printf("\n\n");
 	}
 
-}*/
+}
+*/
+
+/*
+	for(k=0; k<lnz; ++k){
+		for(j=0; j<lny; ++j){
+			for(i=0; i<lnx; ++i){
+				local_rect[l(i,j,k,lnx,lny)] = 1.;
+			}
+		}
+	}
+
+*/
+
 
 	// step 2: take FFT on local_rect
 	MPI_Barrier(MPI_COMM_WORLD);
 	Cp3dfft_ftran_r2c(local_rect, output_rect, op_f);
-
+/*
 if (proc_id == 1){
 	
 	for(k = 0; k<lkz; ++k){
@@ -525,8 +574,44 @@ if (proc_id == 1){
 	}
 
 }
+*/
+
+	FILE *fd = NULL;
+	char filename[256];
+	snprintf(filename, 256, "output%02d.txt", proc_id);
+	fd = fopen(filename, "w+");
+	if (NULL == fd){
+		printf("Error opening file \n");
+		return 1;
+	}
+/*
+	for(k=0; k<lkz; ++k){
+		for(j=0; j<lky; ++j){
+			for(i=0; i<lkx; ++i){
+				fprintf(fd, "%1.12f %1.12fi \n", output_rect[l(2*i,j,k,lkx*2,lky)],output_rect[l(2*i+1,j,k,lkx*2,lky)]);
+			}
+		}
+	}
+*/
+
+	for(k=0; k<lnz+2*Msp; ++k){
+		for(j=0; j<lny+2*Msp; ++j){
+			for(i=0; i<lnx; ++i){
+				fprintf(fd, "%1.1f ", spread_rect[l(i,j,k,lnx,lky+2*Msp)]);
+			}
+			fprintf(fd, "\n");
+		}
+		fprintf(fd , "\n\n");
+	}
+
+
+	fclose(fd);
+
 	// step 3: Deconvolution
 
+
+
+	// clean up 
 	Cp3dfft_clean();
 	
 	free(xj); free(yj); free(zj);
