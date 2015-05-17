@@ -106,17 +106,30 @@ int main(int argc, char *argv[])
 	int idx[3], dimSpreadRect[3]; 
 	int i,j,k,s, l1;
 	double t1, t2;	
-
+	FILE *fp;
 	
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &proc_id);
 	MPI_Status status;
 
-	// dimension processor grid: P1 X P2
-	dims[0]=4; dims[1]=4;
-	P1 = dims[0]; P2 = dims[1];
 
+	if (proc_id == 0){
+		fp = fopen("stdin","r");
+		fscanf(fp, "%d %d %d %d %d %d\n", &M, &R, &Msp, &P1, &P2);
+	}
+
+	MPI_Bcast(&M, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&R, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&Msp, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&P1, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&P2, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+
+
+
+
+	
 	// set 8 neighbours
 	pk = proc_id / P1;
 	pj = proc_id % P1;
@@ -131,10 +144,7 @@ int main(int argc, char *argv[])
 
  	
 	L = 2.0 * M_PI;
-	M  = 64;
-	R  = 2;
-	Mr = M*R; 
-	Msp = 12; 
+	Mr = M*R;  
 	tau = (1.*Msp) / (M*M); 
 	h = L / Mr; 
 
@@ -174,6 +184,7 @@ if (proc_id == 0){
 	E2zl = (double *) malloc( sizeof(double) * 2*Msp );
 
 	// initialize P3DFFT
+	dims[0] = P1; dims[1] = P2;
 	Cp3dfft_setup(dims,Mr,Mr,Mr,MPI_Comm_c2f(MPI_COMM_WORLD), Mr,Mr,Mr, 0, memsize);
 	
 	// set input dimensions	
@@ -221,7 +232,7 @@ if (proc_id == 0){
 	}
 
 
-
+/*
 	// need to print sources to check
 	FILE *fd_sc = NULL;
 	char filename_sc[256];
@@ -237,7 +248,7 @@ if (proc_id == 0){
 	}
 
 	fclose(fd_sc);
-
+*/
 
 	// dimension of local rectangle
 	lnx = isize[0];
@@ -525,6 +536,8 @@ if (proc_id == 3)
 	printf("%d %d %d %d %d %d %d %d \n", NORTH, NE, EAST, SE, SOUTH , SW ,WEST, NW);
 */
 
+	
+	t1 = MPI_Wtime();
 
 	// NORTH <-> SOUTH communication
 	// 1st sweep: even row send NORTH, then receive NORTH
@@ -607,6 +620,10 @@ if (proc_id == 3)
 		MPI_Recv(SE_Recv, lnx*Msp*Msp, MPI_DOUBLE,    SE, 99, MPI_COMM_WORLD, &status);	
 		MPI_Send(SE_Send, lnx*Msp*Msp, MPI_DOUBLE,    SE, 99, MPI_COMM_WORLD);
 	}
+
+
+	t2 = MPI_Wtime();
+	printf("proc %d, communication time: %f\n", proc_id ,t2-t1);
 
 
 /*
@@ -809,7 +826,7 @@ if (proc_id == 0){
 	t1 = MPI_Wtime();
 	Cp3dfft_ftran_r2c(local_rect, output_rect, op_f);
 	t2 = MPI_Wtime();
-	printf("rank %d: elapsed time is %f\n", proc_id, t2-t1);
+	printf("proc %d: elapsed time is %f\n", proc_id, t2-t1);
 
 
 /*
@@ -828,6 +845,8 @@ if (proc_id == 1){
 }
 */
 
+
+/*
 	FILE *fd = NULL;
 	char filename[256];
 	snprintf(filename, 256, "output%02d.txt", proc_id);
@@ -844,6 +863,9 @@ if (proc_id == 1){
 			}
 		}
 	}
+*/
+
+
 
 /*
 	for(k=0; k<lnz+2*Msp; ++k){
@@ -855,9 +877,11 @@ if (proc_id == 1){
 		}
 		fprintf(fd , "\n\n");
 	}
-*/
 
 	fclose(fd);
+*/
+
+
 
 	// step 3: Deconvolution
 
